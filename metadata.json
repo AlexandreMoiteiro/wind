@@ -1,0 +1,7 @@
+{
+  "name": "Wind.pt - Pilot Wind Dashboard",
+  "description": "Real-time runway wind components and flight conditions for Portuguese aerodromes.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
