@@ -243,6 +243,16 @@ const CompassSVG = ({
         {/* All Runway Strips */}
         {physicalAxes.map((axis, idx) => {
           const isActiveAxis = axis.labels.includes(activeRwy.label);
+          const primaryEnd = allRunways.find(r => {
+            const diff = Math.abs((r.heading % 180) - axis.heading);
+            return Math.min(diff, 180 - diff) < 10;
+          });
+          const reciprocalEnd = allRunways.find(r => {
+            if (!primaryEnd) return false;
+            const diff = Math.abs(r.heading - ((primaryEnd.heading + 180) % 360));
+            return Math.min(diff, 360 - diff) < 10;
+          });
+
           return (
             <g key={idx} transform={`rotate(${axis.heading}, 50, 50)`}>
               {/* Runway Body */}
@@ -268,21 +278,29 @@ const CompassSVG = ({
                     ))}
                   </g>
 
-                  {/* Active Runway Label (At the BOTTOM - where the plane enters) */}
-                  <text x="50" y="82" textAnchor="middle" fontSize="6" className="fill-white font-black">
-                    {activeRwy.label}
-                  </text>
+                  {/* Runway Labels stay fixed by physical axis (prevents visual direction flips) */}
+                  {primaryEnd?.label && (
+                    <text
+                      x="50"
+                      y="82"
+                      textAnchor="middle"
+                      fontSize="6"
+                      className={activeRwy.label === primaryEnd.label ? "fill-amber-300 font-black" : "fill-white font-black"}
+                    >
+                      {primaryEnd.label}
+                    </text>
+                  )}
                   
-                  {/* Reciprocal Label (At the TOP - the exit end) */}
-                  {allRunways.find(r => {
-                    const diff = Math.abs(r.heading - ((activeRwy.heading + 180) % 360));
-                    return Math.min(diff, 360 - diff) < 10;
-                  })?.label && (
-                    <text x="50" y="20" textAnchor="middle" fontSize="5" className="fill-white/60 font-bold" transform="rotate(180, 50, 20)">
-                      {allRunways.find(r => {
-                        const diff = Math.abs(r.heading - ((activeRwy.heading + 180) % 360));
-                        return Math.min(diff, 360 - diff) < 10;
-                      })?.label}
+                  {reciprocalEnd?.label && (
+                    <text
+                      x="50"
+                      y="20"
+                      textAnchor="middle"
+                      fontSize="5"
+                      className={activeRwy.label === reciprocalEnd.label ? "fill-amber-300 font-black" : "fill-white/60 font-bold"}
+                      transform="rotate(180, 50, 20)"
+                    >
+                      {reciprocalEnd.label}
                     </text>
                   )}
                 </>
