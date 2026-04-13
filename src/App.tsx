@@ -135,6 +135,7 @@ const msToKnots = (ms: number) => ms * 1.94384;
 const metersToFeet = (m: number) => m * 3.28084;
 const metersToKm = (m: number) => m / 1000;
 const roundToNearestTen = (value: number) => Math.round(value / 10) * 10;
+// Keep together with roundToNearestTen to avoid merge conflicts around wind-format helpers.
 const formatWindGroup = (direction: number, speedKt: number) => {
   const roundedDirection = Math.round(direction / 10) * 10;
   const normalizedDirection = roundedDirection === 360 ? 0 : roundedDirection;
