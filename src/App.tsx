@@ -116,6 +116,22 @@ type WeatherData = {
   }>;
 };
 
+type MetarCloudLayer = {
+  cover: string;
+  base?: number;
+};
+
+type MetarApiResponse = {
+  wdir?: number | string;
+  wspd?: number | string;
+  wgst?: number | string;
+  visib?: number | string;
+  temp?: number | string;
+  cloud_layers?: MetarCloudLayer[];
+  clouds?: MetarCloudLayer[];
+  ceiling?: number | string;
+};
+
 type FlightCategory = "VFR" | "MVFR" | "IFR" | "LIFR";
 
 const FLIGHT_CAT_INFO: Record<FlightCategory, { label: string, emoji: string, color: string }> = {
@@ -132,6 +148,8 @@ const metersToFeet = (m: number) => m * 3.28084;
 const metersToKm = (m: number) => m / 1000;
 const roundToNearestTen = (value: number) => Math.round(value / 10) * 10;
 const roundToStep = (value: number, step: number) => Math.round(value / step) * step;
+const normalizeHeading = (value: number) => ((value % 360) + 360) % 360;
+const roundDirectionToTen = (value: number) => normalizeHeading(roundToNearestTen(value));
 
 const calculateWindComponents = (windSpeed: number, windDir: number, rwyHeading: number) => {
   const diff = (windDir - rwyHeading) * (Math.PI / 180);
@@ -333,6 +351,8 @@ export default function App() {
 
   const currentWeatherData = weatherData[selectedIcao];
 
+  const [sortBy, setSortBy] = useState<"runway" | "headwind" | "crosswind">("headwind");
+
   const fetchWeather = useCallback(async (icao: string) => {
     const ad = AERODROMES.find(a => a.icao === icao);
     if (!ad) return;
@@ -341,15 +361,13 @@ export default function App() {
     setError(null);
 
     try {
-      // Using Met.no API (Locationforecast 2.0 Complete)
-      const response = await fetch(
+      const forecastResponse = await fetch(
         `https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=${ad.latitude}&lon=${ad.longitude}`
       );
+      if (!forecastResponse.ok) throw new Error("Weather service unavailable");
 
-      if (!response.ok) throw new Error("Weather service unavailable");
-
-      const data = await response.json();
-      const timeseries = data.properties.timeseries;
+      const forecastData = await forecastResponse.json();
+      const timeseries = forecastData.properties.timeseries;
       const current = timeseries[0].data.instant.details;
       
       const processPoint = (details: any) => {
@@ -383,11 +401,73 @@ export default function App() {
       };
 
       const currentProcessed = processPoint(current);
+
+      // METAR is optional because many selected aerodromes do not publish METAR.
+      let metar: MetarApiResponse | undefined;
+      try {
+        const metarResponse = await fetch(`https://aviationweather.gov/api/data/metar?ids=${icao}&format=json&hours=2`);
+        if (metarResponse.ok) {
+          const metarJson: MetarApiResponse[] = await metarResponse.json();
+          metar = metarJson?.[0];
+        }
+      } catch (metarErr) {
+        console.warn(`METAR unavailable for ${icao}, using forecast source only.`, metarErr);
+      }
+
+      if (metar) {
+        const metarWindDirRaw = Number(metar.wdir);
+        const metarWindSpeedKt = Number(metar.wspd);
+        const metarWindGustKt = Number(metar.wgst);
+        const metarVisSm = Number(metar.visib);
+        const metarTemp = Number(metar.temp);
+        const cloudLayers = metar.cloud_layers || metar.clouds || [];
+        const metarCeilingFt = Number(metar.ceiling);
+
+        if (!Number.isNaN(metarWindDirRaw)) {
+          currentProcessed.windDirection = roundDirectionToTen(metarWindDirRaw);
+        } else {
+          currentProcessed.windDirection = roundDirectionToTen(currentProcessed.windDirection);
+        }
+
+        if (!Number.isNaN(metarWindSpeedKt)) {
+          currentProcessed.windSpeed = metarWindSpeedKt / 1.94384;
+        }
+
+        if (!Number.isNaN(metarWindGustKt)) {
+          currentProcessed.windGust = metarWindGustKt / 1.94384;
+        }
+
+        if (!Number.isNaN(metarVisSm)) {
+          currentProcessed.visibility = metarVisSm * 1609.34;
+        }
+
+        if (!Number.isNaN(metarTemp)) {
+          currentProcessed.temperature = metarTemp;
+        }
+
+        if (!Number.isNaN(metarCeilingFt)) {
+          currentProcessed.cloudCeiling = metarCeilingFt / 3.28084;
+        } else if (cloudLayers.length) {
+          const lowestBrokenOrOvercast = cloudLayers
+            .filter(layer => ["BKN", "OVC", "VV"].includes(layer.cover) && layer.base !== undefined)
+            .map(layer => layer.base as number)
+            .sort((a, b) => a - b)[0];
+          if (lowestBrokenOrOvercast) {
+            currentProcessed.cloudCeiling = lowestBrokenOrOvercast / 3.28084;
+          }
+        }
+      } else {
+        currentProcessed.windDirection = roundDirectionToTen(currentProcessed.windDirection);
+      }
       
-      const forecast = timeseries.slice(1, 13).map((ts: any) => ({
-        time: ts.time,
-        ...processPoint(ts.data.instant.details)
-      }));
+      const forecast = timeseries.slice(1, 13).map((ts: any) => {
+        const point = processPoint(ts.data.instant.details);
+        return {
+          time: ts.time,
+          ...point,
+          windDirection: roundDirectionToTen(point.windDirection)
+        };
+      });
 
       setWeatherData(prev => ({
         ...prev,
@@ -445,6 +525,30 @@ export default function App() {
       crosswind: roundToStep(comps.crosswind, 10),
     };
   }, [currentWeatherData, activeRwy]);
+
+  const runwayTableRows = useMemo(() => {
+    if (!currentWeatherData) return [];
+
+    const rows = selectedAerodrome.runways.map((r) => {
+      const comps = calculateWindComponents(
+        msToKnots(currentWeatherData.windSpeed),
+        currentWeatherData.windDirection,
+        r.heading
+      );
+      return {
+        label: r.label,
+        headwind: roundToStep(comps.headwind, 10),
+        crosswind: roundToStep(comps.crosswind, 10),
+        xwAbs: Math.abs(roundToStep(comps.crosswind, 10)),
+      };
+    });
+
+    return [...rows].sort((a, b) => {
+      if (sortBy === "runway") return a.label.localeCompare(b.label);
+      if (sortBy === "crosswind") return a.xwAbs - b.xwAbs;
+      return b.headwind - a.headwind;
+    });
+  }, [currentWeatherData, selectedAerodrome, sortBy]);
 
   const forecastChartData = useMemo(() => (
     currentWeatherData?.forecast.map(f => ({
@@ -650,7 +754,7 @@ export default function App() {
                   <div className="text-xl md:text-2xl font-black text-slate-800">
                     {currentWeatherData ? (
                       <>
-                        {currentWeatherData.windDirection}° <span className="text-slate-400 font-medium text-base md:text-lg">FROM</span> @ {roundToNearestTen(msToKnots(currentWeatherData.windSpeed))}
+                        {roundDirectionToTen(currentWeatherData.windDirection)}° <span className="text-slate-400 font-medium text-base md:text-lg">FROM</span> @ {roundToNearestTen(msToKnots(currentWeatherData.windSpeed))}
                         {currentWeatherData.windGust && currentWeatherData.windGust > currentWeatherData.windSpeed + 2 && (
                           <span className="text-orange-500"> G {roundToNearestTen(msToKnots(currentWeatherData.windGust))}</span>
                         )}
@@ -901,11 +1005,77 @@ export default function App() {
               </div>
             )}
 
+            {/* Interactive runway matrix */}
+            <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">Runway Decision Matrix</h3>
+                <div className="flex gap-2">
+                  {[
+                    { key: "headwind", label: "Best HW" },
+                    { key: "crosswind", label: "Min XW" },
+                    { key: "runway", label: "RWY" },
+                  ].map((option) => (
+                    <button
+                      key={option.key}
+                      onClick={() => setSortBy(option.key as "runway" | "headwind" | "crosswind")}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border ${
+                        sortBy === option.key ? "bg-sky-600 text-white border-sky-600" : "bg-slate-50 text-slate-500 border-slate-200"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="text-slate-400 uppercase tracking-widest text-[10px]">
+                      <th className="py-2">Runway</th>
+                      <th className="py-2">Head/Tail</th>
+                      <th className="py-2">Crosswind</th>
+                      <th className="py-2">Hint</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {runwayTableRows.map((row) => {
+                      const recommended = row.label === bestRunway.label;
+                      const active = row.label === activeRwy.label;
+                      return (
+                        <tr
+                          key={row.label}
+                          onClick={() => setManualRwy(prev => ({ ...prev, [selectedIcao]: row.label }))}
+                          className={`cursor-pointer border-t transition-colors ${
+                            active ? "bg-sky-50 border-sky-100" : "border-slate-100 hover:bg-slate-50"
+                          }`}
+                        >
+                          <td className="py-3 font-black text-slate-700">RWY {row.label}</td>
+                          <td className={`py-3 font-bold ${row.headwind >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                            {row.headwind >= 0 ? "+" : ""}{row.headwind.toFixed(0)} kt
+                          </td>
+                          <td className="py-3 font-bold text-slate-700">
+                            {row.crosswind >= 0 ? "R" : "L"} {Math.abs(row.crosswind).toFixed(0)} kt
+                          </td>
+                          <td className="py-3">
+                            {recommended ? (
+                              <span className="px-2 py-1 rounded-md bg-emerald-100 text-emerald-700 font-black text-[10px] uppercase">Recommended</span>
+                            ) : (
+                              <span className="text-slate-400 font-bold">Alternative</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
             {/* Disclaimer */}
             <div className="p-4 bg-slate-100 rounded-xl flex items-start gap-3">
               <Info className="w-4 h-4 text-slate-400 mt-0.5 flex-shrink-0" />
               <p className="text-[10px] text-slate-500 leading-relaxed">
-                <strong>Disclaimer:</strong> This dashboard is for informational purposes only. Data is sourced from Met.no and may not reflect real-time local conditions. Always consult official METAR/TAF and NOTAMs before flight operations. Runway headings are magnetic.
+                <strong>Disclaimer:</strong> This dashboard is for informational purposes only. Data is sourced from Met.no with METAR enrichment when available. Always consult official METAR/TAF and NOTAMs before flight operations. Runway headings are magnetic.
               </p>
             </div>
           </div>
