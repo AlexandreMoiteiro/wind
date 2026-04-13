@@ -22,7 +22,6 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
-  LineChart, 
   Line, 
   XAxis, 
   YAxis, 
@@ -135,6 +134,13 @@ const FLIGHT_CAT_INFO: Record<FlightCategory, { label: string, emoji: string, co
 const msToKnots = (ms: number) => ms * 1.94384;
 const metersToFeet = (m: number) => m * 3.28084;
 const metersToKm = (m: number) => m / 1000;
+const roundToNearestTen = (value: number) => Math.round(value / 10) * 10;
+const formatWindGroup = (direction: number, speedKt: number) => {
+  const roundedDirection = Math.round(direction / 10) * 10;
+  const normalizedDirection = roundedDirection === 360 ? 0 : roundedDirection;
+  const directionGroup = normalizedDirection.toString().padStart(3, "0");
+  return `${directionGroup}/${roundToNearestTen(speedKt).toString().padStart(2, "0")}KT`;
+};
 
 const calculateWindComponents = (windSpeed: number, windDir: number, rwyHeading: number) => {
   const diff = (windDir - rwyHeading) * (Math.PI / 180);
@@ -192,14 +198,15 @@ const CompassSVG = ({
   const physicalAxes = useMemo(() => {
     const axes: Array<{ heading: number, labels: string[] }> = [];
     allRunways.forEach(r => {
+      const canonicalHeading = r.heading % 180;
       const existing = axes.find(a => {
-        const diff = Math.min(Math.abs(a.heading - r.heading), 360 - Math.abs(a.heading - r.heading));
-        return diff < 10 || Math.abs(diff - 180) < 10;
+        const diff = Math.abs(a.heading - canonicalHeading);
+        return Math.min(diff, 180 - diff) < 10;
       });
       if (existing) {
         if (!existing.labels.includes(r.label)) existing.labels.push(r.label);
       } else {
-        axes.push({ heading: r.heading, labels: [r.label] });
+        axes.push({ heading: canonicalHeading, labels: [r.label] });
       }
     });
     return axes;
@@ -561,8 +568,8 @@ export default function App() {
                           onClick={() => setManualRwy(prev => ({ ...prev, [selectedIcao]: r.label }))}
                           className={`relative px-3 py-1.5 md:px-4 md:py-2 rounded-xl border transition-all text-left flex flex-col min-w-[100px] md:min-w-[140px] ${
                             isActive 
-                              ? 'bg-sky-600 border-sky-600 text-white shadow-md' 
-                              : 'bg-white border-slate-200 text-slate-700 hover:border-sky-300'
+                              ? 'bg-gradient-to-br from-sky-600 to-cyan-500 border-sky-600 text-white shadow-md' 
+                              : 'bg-white border-slate-200 text-slate-700 hover:border-sky-300 hover:bg-sky-50'
                           }`}
                         >
                           <div className="flex items-center justify-between mb-0.5">
@@ -574,9 +581,14 @@ export default function App() {
                             )}
                           </div>
                           <div className={`text-[8px] md:text-[10px] font-bold flex gap-2 ${isActive ? 'text-white/80' : 'text-slate-400'}`}>
-                            <span>HW: {comps.headwind.toFixed(0)}k</span>
-                            <span>XW: {Math.abs(comps.crosswind).toFixed(0)}k</span>
+                            <span>HW: {roundToNearestTen(comps.headwind)}k</span>
+                            <span>XW: {roundToNearestTen(Math.abs(comps.crosswind))}k</span>
                           </div>
+                          {!isAuto && isActive && (
+                            <span className="absolute top-1.5 right-1.5 text-[7px] px-1 py-0.5 rounded bg-white/20 font-black uppercase tracking-wider">
+                              Manual
+                            </span>
+                          )}
                           {isActive && (
                             <motion.div 
                               layoutId="active-rwy-glow"
@@ -603,7 +615,7 @@ export default function App() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
               
               {/* Compass Card */}
-              <div className="bg-white rounded-2xl p-6 md:p-8 shadow-sm border border-slate-200 flex flex-col items-center justify-center relative overflow-hidden">
+              <div className="bg-gradient-to-b from-white to-sky-50/40 rounded-2xl p-6 md:p-8 shadow-sm border border-slate-200 flex flex-col items-center justify-center relative overflow-hidden">
                 <div className="absolute top-4 left-4 flex items-center gap-2 text-slate-400">
                   <Compass className="w-4 h-4" />
                   <span className="text-[10px] font-bold uppercase tracking-widest">Visualizer</span>
@@ -620,12 +632,17 @@ export default function App() {
                   </div>
                 )}
                 <div className="mt-4 md:mt-6 text-center">
+                  {currentWeatherData && (
+                    <div className="inline-flex mb-2 px-3 py-1 rounded-full bg-slate-900 text-white text-[10px] font-black tracking-widest">
+                      {formatWindGroup(currentWeatherData.windDirection, msToKnots(currentWeatherData.windSpeed))}
+                    </div>
+                  )}
                   <div className="text-xl md:text-2xl font-black text-slate-800">
                     {currentWeatherData ? (
                       <>
-                        {currentWeatherData.windDirection}° <span className="text-slate-400 font-medium text-base md:text-lg">FROM</span> @ {msToKnots(currentWeatherData.windSpeed).toFixed(0)}
+                        {currentWeatherData.windDirection}° <span className="text-slate-400 font-medium text-base md:text-lg">FROM</span> @ {roundToNearestTen(msToKnots(currentWeatherData.windSpeed))}
                         {currentWeatherData.windGust && currentWeatherData.windGust > currentWeatherData.windSpeed + 2 && (
-                          <span className="text-orange-500"> G {msToKnots(currentWeatherData.windGust).toFixed(0)}</span>
+                          <span className="text-orange-500"> G {roundToNearestTen(msToKnots(currentWeatherData.windGust))}</span>
                         )}
                         <span className="text-slate-400 font-medium text-base md:text-lg ml-1">KT</span>
                       </>
@@ -645,7 +662,7 @@ export default function App() {
                     </div>
                     <div>
                       <div className={`text-base md:text-lg font-black ${windComponents.headwind >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                        {Math.abs(windComponents.headwind).toFixed(0)} KT
+                        {roundToNearestTen(Math.abs(windComponents.headwind))} KT
                       </div>
                       <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                         {windComponents.headwind >= 0 ? 'Headwind' : 'Tailwind'}
@@ -665,7 +682,7 @@ export default function App() {
                     </div>
                     <div>
                       <div className={`text-base md:text-lg font-black ${Math.abs(windComponents.crosswind) > 15 ? 'text-red-600' : Math.abs(windComponents.crosswind) > 10 ? 'text-orange-500' : 'text-slate-800'}`}>
-                        {Math.abs(windComponents.crosswind).toFixed(0)} KT
+                        {roundToNearestTen(Math.abs(windComponents.crosswind))} KT
                       </div>
                       <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                         X-Wind {windComponents.crosswind >= 0 ? '(R)' : '(L)'}
@@ -733,9 +750,12 @@ export default function App() {
             {currentWeatherData?.forecast && (
               <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
                 <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400 flex items-center gap-2">
-                    <TrendingUp className="w-3 h-3" /> 12-Hour Interactive Forecast
-                  </h3>
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400 flex items-center gap-2">
+                      <TrendingUp className="w-3 h-3" /> 12-Hour Interactive Forecast
+                    </h3>
+                    <p className="text-[10px] text-slate-400 mt-1">Wind/Gusts em nós, visibilidade em km e teto em milhares de pés.</p>
+                  </div>
                   <div className="flex items-center gap-4 text-[10px] font-bold uppercase tracking-tighter">
                     <div className="flex items-center gap-1.5">
                       <div className="w-2 h-2 bg-sky-500 rounded-full" />
@@ -757,10 +777,10 @@ export default function App() {
                     <AreaChart
                       data={currentWeatherData.forecast.map(f => ({
                         time: new Date(f.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                        wind: Number(msToKnots(f.windSpeed).toFixed(1)),
-                        gust: Number(msToKnots(f.windGust || f.windSpeed).toFixed(1)),
+                        wind: roundToNearestTen(msToKnots(f.windSpeed)),
+                        gust: roundToNearestTen(msToKnots(f.windGust || f.windSpeed)),
                         vis: Number(metersToKm(f.visibility).toFixed(1)),
-                        ceiling: f.cloudCeiling < 0 ? 10000 : Number(metersToFeet(f.cloudCeiling).toFixed(0)),
+                        ceiling: f.cloudCeiling < 0 ? 10 : Number((metersToFeet(f.cloudCeiling) / 1000).toFixed(1)),
                         rawTime: f.time
                       }))}
                       margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
@@ -792,7 +812,13 @@ export default function App() {
                         axisLine={false} 
                         tickLine={false} 
                         tick={{ fontSize: 10, fill: '#10b981', fontWeight: 600 }}
-                        label={{ value: 'Vis (km) / Ceiling (ft)', angle: 90, position: 'insideRight', fontSize: 10, fill: '#10b981', fontWeight: 700 }}
+                        domain={[0, 10]}
+                        label={{ value: 'Visibility (km)', angle: 90, position: 'insideRight', fontSize: 10, fill: '#10b981', fontWeight: 700 }}
+                      />
+                      <YAxis
+                        yAxisId="ceiling"
+                        orientation="right"
+                        hide
                       />
                       <Tooltip 
                         contentStyle={{ 
@@ -805,6 +831,11 @@ export default function App() {
                         }}
                         itemStyle={{ color: '#fff' }}
                         cursor={{ stroke: '#cbd5e1', strokeWidth: 1 }}
+                        formatter={(value: number, name: string) => {
+                          if (name === "Ceiling (kft)") return [`${value.toFixed(1)} kft`, name];
+                          if (name === "Visibility (km)") return [`${value.toFixed(1)} km`, name];
+                          return [`${value.toFixed(0)} kt`, name];
+                        }}
                       />
                       <Area 
                         yAxisId="left"
@@ -826,6 +857,8 @@ export default function App() {
                         strokeWidth={3}
                         name="Wind (kt)"
                       />
+                      <ReferenceLine yAxisId="left" y={20} stroke="#f59e0b" strokeDasharray="4 4" ifOverflow="extendDomain" />
+                      <ReferenceLine yAxisId="left" y={30} stroke="#ef4444" strokeDasharray="4 4" ifOverflow="extendDomain" />
                       <Line 
                         yAxisId="right"
                         type="monotone" 
@@ -836,14 +869,14 @@ export default function App() {
                         name="Visibility (km)"
                       />
                       <Line 
-                        yAxisId="right"
+                        yAxisId="ceiling"
                         type="monotone" 
                         dataKey="ceiling" 
                         stroke="#8b5cf6" 
                         strokeWidth={2}
                         strokeDasharray="3 3"
                         dot={false}
-                        name="Ceiling (ft)"
+                        name="Ceiling (kft)"
                       />
                       <Legend 
                         verticalAlign="top" 
@@ -872,7 +905,7 @@ export default function App() {
                               className="w-2.5 h-2.5 text-sky-500" 
                               style={{ transform: `rotate(${f.windDirection}deg)` }} 
                             />
-                            <span className="text-xs font-black text-slate-800">{msToKnots(f.windSpeed).toFixed(0)}kt</span>
+                            <span className="text-xs font-black text-slate-800">{roundToNearestTen(msToKnots(f.windSpeed))}kt</span>
                           </div>
                         </div>
                         <div className="flex items-center justify-between">
