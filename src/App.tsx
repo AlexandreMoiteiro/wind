@@ -268,18 +268,22 @@ const CompassSVG = ({
               />
 
               {(() => {
-                const startHeading = axis.heading;
-                const endHeading = (axis.heading + 180) % 360;
-                const startLabel = allRunways.find(r => {
-                  const diff = Math.abs(r.heading - startHeading);
+                const nearEndHeading = axis.heading;
+                const farEndHeading = (axis.heading + 180) % 360;
+                const nearEndLabel = allRunways.find(r => {
+                  const diff = Math.abs(r.heading - nearEndHeading);
                   return Math.min(diff, 360 - diff) < 10;
                 })?.label;
-                const endLabel = allRunways.find(r => {
-                  const diff = Math.abs(r.heading - endHeading);
+                const farEndLabel = allRunways.find(r => {
+                  const diff = Math.abs(r.heading - farEndHeading);
                   return Math.min(diff, 360 - diff) < 10;
                 })?.label;
-                const isStartActive = startLabel === activeRwy.label;
-                const isEndActive = endLabel === activeRwy.label;
+                // Runway designator at a threshold reflects the direction flown *away* from that threshold.
+                // So the top threshold should display the reciprocal of the compass bearing to the top end.
+                const topLabel = farEndLabel;
+                const bottomLabel = nearEndLabel;
+                const isTopActive = topLabel === activeRwy.label;
+                const isBottomActive = bottomLabel === activeRwy.label;
 
                 return (
                   <>
@@ -295,26 +299,26 @@ const CompassSVG = ({
                       ))}
                     </g>
 
-                    {startLabel && (
+                    {topLabel && (
                       <text
                         x="50"
                         y="20"
                         textAnchor="middle"
                         fontSize="5.5"
-                        className={isStartActive ? "fill-emerald-300 font-black" : "fill-white/60 font-bold"}
+                        className={isTopActive ? "fill-emerald-300 font-black" : "fill-white/60 font-bold"}
                       >
-                        {startLabel}
+                        {topLabel}
                       </text>
                     )}
-                    {endLabel && (
+                    {bottomLabel && (
                       <text
                         x="50"
                         y="82"
                         textAnchor="middle"
                         fontSize="5.5"
-                        className={isEndActive ? "fill-emerald-300 font-black" : "fill-white/60 font-bold"}
+                        className={isBottomActive ? "fill-emerald-300 font-black" : "fill-white/60 font-bold"}
                       >
-                        {endLabel}
+                        {bottomLabel}
                       </text>
                     )}
                   </>
@@ -361,9 +365,9 @@ export default function App() {
     setError(null);
 
     try {
-      const [metarResponse, forecastResponse] = await Promise.all([
-        fetch(`https://aviationweather.gov/api/data/metar?ids=${icao}&format=json&hours=2`),
-        fetch(`https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=${ad.latitude}&lon=${ad.longitude}`)
+      const [forecastResponse, metarResult] = await Promise.all([
+        fetch(`https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=${ad.latitude}&lon=${ad.longitude}`),
+        fetch(`https://aviationweather.gov/api/data/metar?ids=${icao}&format=json&hours=2`).catch(() => null)
       ]);
 
       if (!forecastResponse.ok) throw new Error("Weather service unavailable");
@@ -404,8 +408,8 @@ export default function App() {
 
       const currentProcessed = processPoint(current);
 
-      if (metarResponse.ok) {
-        const metarJson: MetarApiResponse[] = await metarResponse.json();
+      if (metarResult?.ok) {
+        const metarJson: MetarApiResponse[] = await metarResult.json();
         const metar = metarJson?.[0];
 
         if (metar) {
