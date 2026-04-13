@@ -361,9 +361,9 @@ export default function App() {
     setError(null);
 
     try {
-      const [metarResponse, forecastResponse] = await Promise.all([
-        fetch(`https://aviationweather.gov/api/data/metar?ids=${icao}&format=json&hours=2`),
-        fetch(`https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=${ad.latitude}&lon=${ad.longitude}`)
+      const [forecastResponse, metarResult] = await Promise.all([
+        fetch(`https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=${ad.latitude}&lon=${ad.longitude}`),
+        fetch(`https://aviationweather.gov/api/data/metar?ids=${icao}&format=json&hours=2`).catch(() => null)
       ]);
 
       if (!forecastResponse.ok) throw new Error("Weather service unavailable");
@@ -404,8 +404,8 @@ export default function App() {
 
       const currentProcessed = processPoint(current);
 
-      if (metarResponse.ok) {
-        const metarJson: MetarApiResponse[] = await metarResponse.json();
+      if (metarResult?.ok) {
+        const metarJson: MetarApiResponse[] = await metarResult.json();
         const metar = metarJson?.[0];
 
         if (metar) {
