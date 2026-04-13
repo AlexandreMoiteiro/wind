@@ -5,7 +5,6 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { 
-  Wind, 
   Navigation, 
   Cloud, 
   Eye, 
@@ -17,22 +16,18 @@ import {
   ArrowUp,
   ArrowRight,
   Compass,
-  TrendingUp,
-  Clock
+  TrendingUp
 } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion } from "motion/react";
 import { 
-  LineChart, 
-  Line, 
+  LineChart,
+  Line,
   XAxis, 
   YAxis, 
   CartesianGrid, 
   Tooltip, 
   ResponsiveContainer, 
-  AreaChart, 
-  Area,
-  Legend,
-  ReferenceLine
+  Legend
 } from 'recharts';
 
 // --- Constants ---
@@ -136,6 +131,9 @@ const msToKnots = (ms: number) => ms * 1.94384;
 const metersToFeet = (m: number) => m * 3.28084;
 const metersToKm = (m: number) => m / 1000;
 const roundToNearestTen = (value: number) => Math.round(value / 10) * 10;
+const roundToStep = (value: number, step: number) => Math.round(value / step) * step;
+const normalizeDirection = (deg: number) => ((deg % 360) + 360) % 360;
+const roundDirectionToNearestTen = (deg: number) => normalizeDirection(roundToNearestTen(deg));
 
 const calculateWindComponents = (windSpeed: number, windDir: number, rwyHeading: number) => {
   const diff = (windDir - rwyHeading) * (Math.PI / 180);
@@ -150,16 +148,6 @@ const getFlightCategory = (ceilingFt: number, visibilityKm: number): FlightCateg
   if ((ceiling >= 1000 && ceiling <= 3000) || (visibilityKm >= 5 && visibilityKm <= 8)) return "MVFR";
   if ((ceiling >= 500 && ceiling < 1000) || (visibilityKm >= 1.6 && visibilityKm < 5)) return "IFR";
   return "LIFR";
-};
-
-const getCategoryColor = (cat: FlightCategory) => {
-  switch (cat) {
-    case "VFR": return "bg-emerald-500 text-white";
-    case "MVFR": return "bg-blue-500 text-white";
-    case "IFR": return "bg-red-500 text-white";
-    case "LIFR": return "bg-purple-600 text-white";
-    default: return "bg-gray-500 text-white";
-  }
 };
 
 // --- Components ---
@@ -251,37 +239,71 @@ const CompassSVG = ({
                 fillOpacity={isActiveAxis ? "1" : "0.3"} 
               />
               
-              {isActiveAxis && (
-                <>
-                  {/* Dashed Center Line */}
-                  <line x1="50" y1="30" x2="50" y2="70" stroke="white" strokeWidth="0.4" strokeDasharray="2 1" strokeOpacity="0.6" />
+              {/* Dashed Center Line */}
+              <line
+                x1="50"
+                y1="30"
+                x2="50"
+                y2="70"
+                stroke="white"
+                strokeWidth="0.4"
+                strokeDasharray="2 1"
+                strokeOpacity={isActiveAxis ? "0.6" : "0.2"}
+              />
 
-                  {/* Threshold Markings (Piano Keys) - Bottom (Entry Threshold) */}
-                  <g transform="translate(46.5, 68)">
-                    {[0, 1.5, 3, 4.5, 6].map(x => (
-                      <rect key={x} x={x} y="0" width="0.8" height="4" fill="white" fillOpacity="0.9" />
-                    ))}
-                  </g>
+              {(() => {
+                const startHeading = axis.heading;
+                const endHeading = (axis.heading + 180) % 360;
+                const topLabel = allRunways.find(r => {
+                  const diff = Math.abs(r.heading - endHeading);
+                  return Math.min(diff, 360 - diff) < 10;
+                })?.label;
+                const bottomLabel = allRunways.find(r => {
+                  const diff = Math.abs(r.heading - startHeading);
+                  return Math.min(diff, 360 - diff) < 10;
+                })?.label;
+                const isTopActive = topLabel === activeRwy.label;
+                const isBottomActive = bottomLabel === activeRwy.label;
 
-                  {/* Active Runway Label (At the BOTTOM - where the plane enters) */}
-                  <text x="50" y="82" textAnchor="middle" fontSize="6" className="fill-white font-black">
-                    {activeRwy.label}
-                  </text>
-                  
-                  {/* Reciprocal Label (At the TOP - the exit end) */}
-                  {allRunways.find(r => {
-                    const diff = Math.abs(r.heading - ((activeRwy.heading + 180) % 360));
-                    return Math.min(diff, 360 - diff) < 10;
-                  })?.label && (
-                    <text x="50" y="20" textAnchor="middle" fontSize="5" className="fill-white/60 font-bold" transform="rotate(180, 50, 20)">
-                      {allRunways.find(r => {
-                        const diff = Math.abs(r.heading - ((activeRwy.heading + 180) % 360));
-                        return Math.min(diff, 360 - diff) < 10;
-                      })?.label}
-                    </text>
-                  )}
-                </>
-              )}
+                return (
+                  <>
+                    {/* Threshold Markings */}
+                    <g transform="translate(46.5, 24)">
+                      {[0, 1.5, 3, 4.5, 6].map(x => (
+                        <rect key={`top-${x}`} x={x} y="0" width="0.8" height="3" fill="white" fillOpacity={isActiveAxis ? "0.8" : "0.25"} />
+                      ))}
+                    </g>
+                    <g transform="translate(46.5, 73)">
+                      {[0, 1.5, 3, 4.5, 6].map(x => (
+                        <rect key={`bottom-${x}`} x={x} y="0" width="0.8" height="3" fill="white" fillOpacity={isActiveAxis ? "0.8" : "0.25"} />
+                      ))}
+                    </g>
+
+                    {topLabel && (
+                      <text
+                        x="50"
+                        y="20"
+                        textAnchor="middle"
+                        fontSize="5.5"
+                        className={isTopActive ? "fill-emerald-300 font-black" : "fill-white/60 font-bold"}
+                      >
+                        {topLabel}
+                      </text>
+                    )}
+                    {bottomLabel && (
+                      <text
+                        x="50"
+                        y="82"
+                        textAnchor="middle"
+                        fontSize="5.5"
+                        className={isBottomActive ? "fill-emerald-300 font-black" : "fill-white/60 font-bold"}
+                      >
+                        {bottomLabel}
+                      </text>
+                    )}
+                  </>
+                );
+              })()}
             </g>
           );
         })}
@@ -306,6 +328,7 @@ export default function App() {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [manualRwy, setManualRwy] = useState<Record<string, string>>({});
+  const [forecastFocusIndex, setForecastFocusIndex] = useState(0);
 
   const selectedAerodrome = useMemo(() => 
     AERODROMES.find(a => a.icao === selectedIcao) || AERODROMES[0], 
@@ -321,53 +344,47 @@ export default function App() {
     setError(null);
 
     try {
-      // Using Met.no API (Locationforecast 2.0 Complete)
+      // Open-Meteo provides explicit visibility/cloud-base fields (better than inferred ceiling heuristics)
       const response = await fetch(
-        `https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=${ad.latitude}&lon=${ad.longitude}`
+        `https://api.open-meteo.com/v1/forecast?latitude=${ad.latitude}&longitude=${ad.longitude}&current=wind_speed_10m,wind_direction_10m,wind_gusts_10m,temperature_2m,visibility,cloud_base&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m,temperature_2m,visibility,cloud_base&forecast_days=2&timezone=auto`
       );
 
       if (!response.ok) throw new Error("Weather service unavailable");
 
       const data = await response.json();
-      const timeseries = data.properties.timeseries;
-      const current = timeseries[0].data.instant.details;
+      const current = data.current;
+      const hourly = data.hourly;
+
+      if (!current || !hourly?.time?.length) throw new Error("Malformed weather data");
       
-      const processPoint = (details: any) => {
-        const windSpeed = details.wind_speed;
-        const windGust = details.wind_speed_of_gust;
-        const windDir = details.wind_from_direction;
-        const temp = details.air_temperature;
-        
-        // Estimate visibility
-        const fog = details.fog_area_fraction || 0;
-        const visibility = fog > 50 ? 500 : fog > 20 ? 2000 : fog > 5 ? 5000 : 10000;
-
-        // Better ceiling logic using cloud_base_altitude if available
-        let cloudCeiling = 10000; // Default to high
-        if (details.cloud_base_altitude !== undefined) {
-          cloudCeiling = details.cloud_base_altitude;
-        } else {
-          // Fallback to estimation only if cloud fraction is significant
-          const lowClouds = details.cloud_area_fraction_low || 0;
-          const totalClouds = details.cloud_area_fraction || 0;
-          if (lowClouds > 25) {
-            cloudCeiling = lowClouds > 80 ? 300 : lowClouds > 50 ? 600 : 1000;
-          } else if (totalClouds > 50) {
-            cloudCeiling = 1500;
-          } else {
-            cloudCeiling = -1; // Indicator for "No Ceiling"
-          }
-        }
-
-        return { windSpeed, windGust, windDirection: windDir, temperature: temp, visibility, cloudCeiling };
+      const processPoint = (point: any) => {
+        const cloudBase = point.cloud_base;
+        return {
+          windSpeed: (point.wind_speed_10m ?? 0) / 3.6,
+          windGust: point.wind_gusts_10m ? point.wind_gusts_10m / 3.6 : undefined,
+          windDirection: normalizeDirection(point.wind_direction_10m ?? 0),
+          temperature: point.temperature_2m ?? 0,
+          visibility: point.visibility ?? 10000,
+          cloudCeiling: cloudBase === null || cloudBase === undefined ? -1 : cloudBase,
+        };
       };
 
       const currentProcessed = processPoint(current);
       
-      const forecast = timeseries.slice(1, 13).map((ts: any) => ({
-        time: ts.time,
-        ...processPoint(ts.data.instant.details)
-      }));
+      const now = new Date();
+      const forecast = hourly.time.map((time: string, idx: number) => ({
+        time,
+        ...processPoint({
+          wind_speed_10m: hourly.wind_speed_10m[idx],
+          wind_gusts_10m: hourly.wind_gusts_10m[idx],
+          wind_direction_10m: hourly.wind_direction_10m[idx],
+          temperature_2m: hourly.temperature_2m[idx],
+          visibility: hourly.visibility[idx],
+          cloud_base: hourly.cloud_base[idx],
+        })
+      }))
+      .filter((item: any) => new Date(item.time) > now)
+      .slice(0, 12);
 
       setWeatherData(prev => ({
         ...prev,
@@ -391,6 +408,10 @@ export default function App() {
     }
   }, [selectedIcao, fetchWeather, weatherData]);
 
+  useEffect(() => {
+    setForecastFocusIndex(0);
+  }, [selectedIcao, currentWeatherData?.updatedAt]);
+
   const bestRunway = useMemo(() => {
     if (!currentWeatherData) return selectedAerodrome.runways[0];
     
@@ -413,22 +434,49 @@ export default function App() {
   const activeRwyLabel = manualRwy[selectedIcao] || bestRunway.label;
   const activeRwy = selectedAerodrome.runways.find(r => r.label === activeRwyLabel) || bestRunway;
 
-  const otherRwyLabel = useMemo(() => {
-    const oppositeHeading = (activeRwy.heading + 180) % 360;
-    return selectedAerodrome.runways.find(r => {
-      const diff = Math.abs(r.heading - oppositeHeading);
-      return Math.min(diff, 360 - diff) < 10;
-    })?.label || "";
-  }, [activeRwy, selectedAerodrome]);
-
   const windComponents = useMemo(() => {
     if (!currentWeatherData) return { headwind: 0, crosswind: 0 };
-    return calculateWindComponents(
+    const comps = calculateWindComponents(
       msToKnots(currentWeatherData.windSpeed),
       currentWeatherData.windDirection,
       activeRwy.heading
     );
+    return {
+      headwind: roundToStep(comps.headwind, 10),
+      crosswind: roundToStep(comps.crosswind, 10),
+    };
   }, [currentWeatherData, activeRwy]);
+
+  const forecastChartData = useMemo(() => (
+    currentWeatherData?.forecast.map(f => ({
+      time: new Date(f.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      wind: roundToNearestTen(msToKnots(f.windSpeed)),
+      windDir: roundDirectionToNearestTen(f.windDirection),
+      gust: roundToNearestTen(msToKnots(f.windGust || f.windSpeed)),
+      vis: Number(metersToKm(f.visibility).toFixed(1)),
+    })) || []
+  ), [currentWeatherData]);
+
+  const forecastRunwayTable = useMemo(() => (
+    currentWeatherData?.forecast.map(f => {
+      const comps = calculateWindComponents(msToKnots(f.windSpeed), f.windDirection, activeRwy.heading);
+      const ceilingFt = f.cloudCeiling < 0 ? -1 : metersToFeet(f.cloudCeiling);
+      const visKm = metersToKm(f.visibility);
+      return {
+        time: new Date(f.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        windDir: roundDirectionToNearestTen(f.windDirection),
+        windKt: roundToNearestTen(msToKnots(f.windSpeed)),
+        gustKt: roundToNearestTen(msToKnots(f.windGust || f.windSpeed)),
+        headwindKt: roundToStep(comps.headwind, 10),
+        crosswindKt: roundToStep(Math.abs(comps.crosswind), 10),
+        visKm: Number(visKm.toFixed(1)),
+        ceilingFt: ceilingFt < 0 ? null : roundToStep(ceilingFt, 100),
+        category: getFlightCategory(ceilingFt, visKm),
+      };
+    }) || []
+  ), [currentWeatherData, activeRwy]);
+
+  const focusedForecast = forecastRunwayTable[forecastFocusIndex] || null;
 
   const flightCat = currentWeatherData 
     ? getFlightCategory(metersToFeet(currentWeatherData.cloudCeiling), metersToKm(currentWeatherData.visibility))
@@ -556,6 +604,8 @@ export default function App() {
                         currentWeatherData.windDirection,
                         r.heading
                       ) : { headwind: 0, crosswind: 0 };
+                      const roundedHead = roundToStep(comps.headwind, 10);
+                      const roundedCross = roundToStep(Math.abs(comps.crosswind), 10);
 
                       return (
                         <button
@@ -576,8 +626,8 @@ export default function App() {
                             )}
                           </div>
                           <div className={`text-[8px] md:text-[10px] font-bold flex gap-2 ${isActive ? 'text-white/80' : 'text-slate-400'}`}>
-                            <span>HW: {comps.headwind.toFixed(0)}k</span>
-                            <span>XW: {Math.abs(comps.crosswind).toFixed(0)}k</span>
+                            <span>HW: {roundedHead.toFixed(0)}k</span>
+                            <span>XW: {roundedCross.toFixed(0)}k</span>
                           </div>
                           {isActive && (
                             <motion.div 
@@ -625,7 +675,7 @@ export default function App() {
                   <div className="text-xl md:text-2xl font-black text-slate-800">
                     {currentWeatherData ? (
                       <>
-                        {currentWeatherData.windDirection}° <span className="text-slate-400 font-medium text-base md:text-lg">FROM</span> @ {roundToNearestTen(msToKnots(currentWeatherData.windSpeed))}
+                        {roundDirectionToNearestTen(currentWeatherData.windDirection)}° <span className="text-slate-400 font-medium text-base md:text-lg">FROM</span> @ {roundToNearestTen(msToKnots(currentWeatherData.windSpeed))}
                         {currentWeatherData.windGust && currentWeatherData.windGust > currentWeatherData.windSpeed + 2 && (
                           <span className="text-orange-500"> G {roundToNearestTen(msToKnots(currentWeatherData.windGust))}</span>
                         )}
@@ -756,23 +806,10 @@ export default function App() {
 
                 <div className="h-[350px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart
-                      data={currentWeatherData.forecast.map(f => ({
-                        time: new Date(f.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                        wind: roundToNearestTen(msToKnots(f.windSpeed)),
-                        gust: roundToNearestTen(msToKnots(f.windGust || f.windSpeed)),
-                        vis: Number(metersToKm(f.visibility).toFixed(1)),
-                        ceiling: f.cloudCeiling < 0 ? 10 : Number((metersToFeet(f.cloudCeiling) / 1000).toFixed(1)),
-                        rawTime: f.time
-                      }))}
+                    <LineChart
+                      data={forecastChartData}
                       margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
                     >
-                      <defs>
-                        <linearGradient id="colorWind" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.1}/>
-                          <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                       <XAxis 
                         dataKey="time" 
@@ -786,6 +823,7 @@ export default function App() {
                         axisLine={false} 
                         tickLine={false} 
                         tick={{ fontSize: 10, fill: '#0ea5e9', fontWeight: 600 }}
+                        domain={[0, 'dataMax + 10']}
                         label={{ value: 'Wind (kt)', angle: -90, position: 'insideLeft', fontSize: 10, fill: '#0ea5e9', fontWeight: 700 }}
                       />
                       <YAxis 
@@ -796,11 +834,6 @@ export default function App() {
                         tick={{ fontSize: 10, fill: '#10b981', fontWeight: 600 }}
                         domain={[0, 10]}
                         label={{ value: 'Visibility (km)', angle: 90, position: 'insideRight', fontSize: 10, fill: '#10b981', fontWeight: 700 }}
-                      />
-                      <YAxis
-                        yAxisId="ceiling"
-                        orientation="right"
-                        hide
                       />
                       <Tooltip 
                         contentStyle={{ 
@@ -813,30 +846,32 @@ export default function App() {
                         }}
                         itemStyle={{ color: '#fff' }}
                         cursor={{ stroke: '#cbd5e1', strokeWidth: 1 }}
+                        labelFormatter={(label: string, payload: any) => {
+                          const dir = payload?.[0]?.payload?.windDir;
+                          return `${label}${typeof dir === 'number' ? ` • ${dir}°` : ''}`;
+                        }}
                         formatter={(value: number, name: string) => {
-                          if (name === "Ceiling (kft)") return [`${value.toFixed(1)} kft`, name];
                           if (name === "Visibility (km)") return [`${value.toFixed(1)} km`, name];
                           return [`${value.toFixed(0)} kt`, name];
                         }}
                       />
-                      <Area 
+                      <Line
                         yAxisId="left"
                         type="monotone" 
                         dataKey="gust" 
                         stroke="#fb923c" 
-                        fill="transparent" 
                         strokeWidth={2}
                         strokeDasharray="5 5"
+                        dot={{ r: 2, fill: '#fb923c' }}
                         name="Gusts (kt)"
                       />
-                      <Area 
+                      <Line
                         yAxisId="left"
                         type="monotone" 
                         dataKey="wind" 
                         stroke="#0ea5e9" 
-                        fillOpacity={1} 
-                        fill="url(#colorWind)" 
                         strokeWidth={3}
+                        dot={{ r: 3, fill: '#0ea5e9' }}
                         name="Wind (kt)"
                       />
                       <Line 
@@ -848,59 +883,77 @@ export default function App() {
                         dot={{ r: 3, fill: '#10b981' }}
                         name="Visibility (km)"
                       />
-                      <Line 
-                        yAxisId="ceiling"
-                        type="monotone" 
-                        dataKey="ceiling" 
-                        stroke="#8b5cf6" 
-                        strokeWidth={2}
-                        strokeDasharray="3 3"
-                        dot={false}
-                        name="Ceiling (kft)"
-                      />
                       <Legend 
                         verticalAlign="top" 
                         height={36} 
                         iconType="circle" 
                         wrapperStyle={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}
                       />
-                    </AreaChart>
+                    </LineChart>
                   </ResponsiveContainer>
                 </div>
 
-                <div className="mt-8 grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {currentWeatherData.forecast.slice(0, 4).map((f, i) => (
-                    <div key={i} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 transition-all hover:shadow-md hover:bg-white group">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                          {new Date(f.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                        <div className="w-2 h-2 bg-sky-500 rounded-full group-hover:animate-ping" />
+                <div className="mt-8 space-y-4">
+                  {focusedForecast && (
+                    <div className="bg-slate-900 text-white rounded-2xl p-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div>
+                        <div className="text-[9px] uppercase text-white/50 font-bold">Focus Slot</div>
+                        <div className="text-lg font-black">{focusedForecast.time}</div>
                       </div>
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold text-slate-500">Wind</span>
-                          <div className="flex items-center gap-1">
-                            <ArrowUp 
-                              className="w-2.5 h-2.5 text-sky-500" 
-                              style={{ transform: `rotate(${f.windDirection}deg)` }} 
-                            />
-                            <span className="text-xs font-black text-slate-800">{roundToNearestTen(msToKnots(f.windSpeed))}kt</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold text-slate-500">Ceiling</span>
-                          <span className="text-xs font-black text-sky-600">
-                            {f.cloudCeiling < 0 ? "—" : `${metersToFeet(f.cloudCeiling).toFixed(0)}ft`}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold text-slate-500">Vis</span>
-                          <span className="text-xs font-black text-emerald-600">{metersToKm(f.visibility).toFixed(0)}km</span>
-                        </div>
+                      <div>
+                        <div className="text-[9px] uppercase text-white/50 font-bold">Wind</div>
+                        <div className="text-lg font-black">{focusedForecast.windDir}° / {focusedForecast.windKt}KT</div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] uppercase text-white/50 font-bold">RWY {activeRwy.label}</div>
+                        <div className="text-lg font-black">HW {focusedForecast.headwindKt} / XW {focusedForecast.crosswindKt}</div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] uppercase text-white/50 font-bold">Category</div>
+                        <div className="text-lg font-black">{focusedForecast.category}</div>
                       </div>
                     </div>
-                  ))}
+                  )}
+
+                  <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+                    <table className="min-w-full text-xs">
+                      <thead className="bg-slate-100 text-slate-500 uppercase tracking-wider">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Hora</th>
+                          <th className="px-3 py-2 text-left">Vento</th>
+                          <th className="px-3 py-2 text-left">Rajada</th>
+                          <th className="px-3 py-2 text-left">HW/XW</th>
+                          <th className="px-3 py-2 text-left">Vis</th>
+                          <th className="px-3 py-2 text-left">Ceiling</th>
+                          <th className="px-3 py-2 text-left">Cat</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {forecastRunwayTable.map((row, idx) => (
+                          <tr
+                            key={`${row.time}-${idx}`}
+                            onMouseEnter={() => setForecastFocusIndex(idx)}
+                            onClick={() => setForecastFocusIndex(idx)}
+                            className={`border-t border-slate-100 cursor-pointer transition-colors ${
+                              idx === forecastFocusIndex ? 'bg-sky-50' : 'hover:bg-slate-50'
+                            }`}
+                          >
+                            <td className="px-3 py-2 font-bold text-slate-700">{row.time}</td>
+                            <td className="px-3 py-2 text-slate-700">{row.windDir}° @ {row.windKt}KT</td>
+                            <td className="px-3 py-2 text-orange-600 font-bold">{row.gustKt}KT</td>
+                            <td className="px-3 py-2 text-slate-700">{row.headwindKt}/{row.crosswindKt}</td>
+                            <td className="px-3 py-2 text-emerald-700 font-bold">{row.visKm}km</td>
+                            <td className="px-3 py-2 text-sky-700 font-bold">{row.ceilingFt ? `${row.ceilingFt}ft` : "CAVOK"}</td>
+                            <td className="px-3 py-2">
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${FLIGHT_CAT_INFO[row.category].color} text-white`}>
+                                {row.category}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             )}
@@ -909,7 +962,7 @@ export default function App() {
             <div className="p-4 bg-slate-100 rounded-xl flex items-start gap-3">
               <Info className="w-4 h-4 text-slate-400 mt-0.5 flex-shrink-0" />
               <p className="text-[10px] text-slate-500 leading-relaxed">
-                <strong>Disclaimer:</strong> This dashboard is for informational purposes only. Data is sourced from Met.no and may not reflect real-time local conditions. Always consult official METAR/TAF and NOTAMs before flight operations. Runway headings are magnetic.
+                <strong>Disclaimer:</strong> This dashboard is for informational purposes only. Weather data is sourced from Open-Meteo model guidance and may differ from local observed METAR conditions. Always consult official METAR/TAF and NOTAMs before flight operations. Runway headings are magnetic.
               </p>
             </div>
           </div>
