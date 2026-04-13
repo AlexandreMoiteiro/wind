@@ -5,7 +5,6 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { 
-  Wind, 
   Navigation, 
   Cloud, 
   Eye, 
@@ -17,22 +16,18 @@ import {
   ArrowUp,
   ArrowRight,
   Compass,
-  TrendingUp,
-  Clock
+  TrendingUp
 } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion } from "motion/react";
 import { 
-  LineChart, 
-  Line, 
+  LineChart,
+  Line,
   XAxis, 
   YAxis, 
   CartesianGrid, 
   Tooltip, 
   ResponsiveContainer, 
-  AreaChart, 
-  Area,
-  Legend,
-  ReferenceLine
+  Legend
 } from 'recharts';
 
 // --- Constants ---
@@ -136,6 +131,7 @@ const msToKnots = (ms: number) => ms * 1.94384;
 const metersToFeet = (m: number) => m * 3.28084;
 const metersToKm = (m: number) => m / 1000;
 const roundToNearestTen = (value: number) => Math.round(value / 10) * 10;
+const roundToStep = (value: number, step: number) => Math.round(value / step) * step;
 
 const calculateWindComponents = (windSpeed: number, windDir: number, rwyHeading: number) => {
   const diff = (windDir - rwyHeading) * (Math.PI / 180);
@@ -150,16 +146,6 @@ const getFlightCategory = (ceilingFt: number, visibilityKm: number): FlightCateg
   if ((ceiling >= 1000 && ceiling <= 3000) || (visibilityKm >= 5 && visibilityKm <= 8)) return "MVFR";
   if ((ceiling >= 500 && ceiling < 1000) || (visibilityKm >= 1.6 && visibilityKm < 5)) return "IFR";
   return "LIFR";
-};
-
-const getCategoryColor = (cat: FlightCategory) => {
-  switch (cat) {
-    case "VFR": return "bg-emerald-500 text-white";
-    case "MVFR": return "bg-blue-500 text-white";
-    case "IFR": return "bg-red-500 text-white";
-    case "LIFR": return "bg-purple-600 text-white";
-    default: return "bg-gray-500 text-white";
-  }
 };
 
 // --- Components ---
@@ -251,37 +237,71 @@ const CompassSVG = ({
                 fillOpacity={isActiveAxis ? "1" : "0.3"} 
               />
               
-              {isActiveAxis && (
-                <>
-                  {/* Dashed Center Line */}
-                  <line x1="50" y1="30" x2="50" y2="70" stroke="white" strokeWidth="0.4" strokeDasharray="2 1" strokeOpacity="0.6" />
+              {/* Dashed Center Line */}
+              <line
+                x1="50"
+                y1="30"
+                x2="50"
+                y2="70"
+                stroke="white"
+                strokeWidth="0.4"
+                strokeDasharray="2 1"
+                strokeOpacity={isActiveAxis ? "0.6" : "0.2"}
+              />
 
-                  {/* Threshold Markings (Piano Keys) - Bottom (Entry Threshold) */}
-                  <g transform="translate(46.5, 68)">
-                    {[0, 1.5, 3, 4.5, 6].map(x => (
-                      <rect key={x} x={x} y="0" width="0.8" height="4" fill="white" fillOpacity="0.9" />
-                    ))}
-                  </g>
+              {(() => {
+                const startHeading = axis.heading;
+                const endHeading = (axis.heading + 180) % 360;
+                const startLabel = allRunways.find(r => {
+                  const diff = Math.abs(r.heading - startHeading);
+                  return Math.min(diff, 360 - diff) < 10;
+                })?.label;
+                const endLabel = allRunways.find(r => {
+                  const diff = Math.abs(r.heading - endHeading);
+                  return Math.min(diff, 360 - diff) < 10;
+                })?.label;
+                const isStartActive = startLabel === activeRwy.label;
+                const isEndActive = endLabel === activeRwy.label;
 
-                  {/* Active Runway Label (At the BOTTOM - where the plane enters) */}
-                  <text x="50" y="82" textAnchor="middle" fontSize="6" className="fill-white font-black">
-                    {activeRwy.label}
-                  </text>
-                  
-                  {/* Reciprocal Label (At the TOP - the exit end) */}
-                  {allRunways.find(r => {
-                    const diff = Math.abs(r.heading - ((activeRwy.heading + 180) % 360));
-                    return Math.min(diff, 360 - diff) < 10;
-                  })?.label && (
-                    <text x="50" y="20" textAnchor="middle" fontSize="5" className="fill-white/60 font-bold" transform="rotate(180, 50, 20)">
-                      {allRunways.find(r => {
-                        const diff = Math.abs(r.heading - ((activeRwy.heading + 180) % 360));
-                        return Math.min(diff, 360 - diff) < 10;
-                      })?.label}
-                    </text>
-                  )}
-                </>
-              )}
+                return (
+                  <>
+                    {/* Threshold Markings */}
+                    <g transform="translate(46.5, 24)">
+                      {[0, 1.5, 3, 4.5, 6].map(x => (
+                        <rect key={`top-${x}`} x={x} y="0" width="0.8" height="3" fill="white" fillOpacity={isActiveAxis ? "0.8" : "0.25"} />
+                      ))}
+                    </g>
+                    <g transform="translate(46.5, 73)">
+                      {[0, 1.5, 3, 4.5, 6].map(x => (
+                        <rect key={`bottom-${x}`} x={x} y="0" width="0.8" height="3" fill="white" fillOpacity={isActiveAxis ? "0.8" : "0.25"} />
+                      ))}
+                    </g>
+
+                    {startLabel && (
+                      <text
+                        x="50"
+                        y="20"
+                        textAnchor="middle"
+                        fontSize="5.5"
+                        className={isStartActive ? "fill-emerald-300 font-black" : "fill-white/60 font-bold"}
+                      >
+                        {startLabel}
+                      </text>
+                    )}
+                    {endLabel && (
+                      <text
+                        x="50"
+                        y="82"
+                        textAnchor="middle"
+                        fontSize="5.5"
+                        className={isEndActive ? "fill-emerald-300 font-black" : "fill-white/60 font-bold"}
+                      >
+                        {endLabel}
+                      </text>
+                    )}
+                  </>
+                );
+              })()}
             </g>
           );
         })}
@@ -413,22 +433,27 @@ export default function App() {
   const activeRwyLabel = manualRwy[selectedIcao] || bestRunway.label;
   const activeRwy = selectedAerodrome.runways.find(r => r.label === activeRwyLabel) || bestRunway;
 
-  const otherRwyLabel = useMemo(() => {
-    const oppositeHeading = (activeRwy.heading + 180) % 360;
-    return selectedAerodrome.runways.find(r => {
-      const diff = Math.abs(r.heading - oppositeHeading);
-      return Math.min(diff, 360 - diff) < 10;
-    })?.label || "";
-  }, [activeRwy, selectedAerodrome]);
-
   const windComponents = useMemo(() => {
     if (!currentWeatherData) return { headwind: 0, crosswind: 0 };
-    return calculateWindComponents(
+    const comps = calculateWindComponents(
       msToKnots(currentWeatherData.windSpeed),
       currentWeatherData.windDirection,
       activeRwy.heading
     );
+    return {
+      headwind: roundToStep(comps.headwind, 10),
+      crosswind: roundToStep(comps.crosswind, 10),
+    };
   }, [currentWeatherData, activeRwy]);
+
+  const forecastChartData = useMemo(() => (
+    currentWeatherData?.forecast.map(f => ({
+      time: new Date(f.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      wind: roundToNearestTen(msToKnots(f.windSpeed)),
+      gust: roundToNearestTen(msToKnots(f.windGust || f.windSpeed)),
+      vis: Number(metersToKm(f.visibility).toFixed(1)),
+    })) || []
+  ), [currentWeatherData]);
 
   const flightCat = currentWeatherData 
     ? getFlightCategory(metersToFeet(currentWeatherData.cloudCeiling), metersToKm(currentWeatherData.visibility))
@@ -756,23 +781,10 @@ export default function App() {
 
                 <div className="h-[350px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart
-                      data={currentWeatherData.forecast.map(f => ({
-                        time: new Date(f.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                        wind: roundToNearestTen(msToKnots(f.windSpeed)),
-                        gust: roundToNearestTen(msToKnots(f.windGust || f.windSpeed)),
-                        vis: Number(metersToKm(f.visibility).toFixed(1)),
-                        ceiling: f.cloudCeiling < 0 ? 10 : Number((metersToFeet(f.cloudCeiling) / 1000).toFixed(1)),
-                        rawTime: f.time
-                      }))}
+                    <LineChart
+                      data={forecastChartData}
                       margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
                     >
-                      <defs>
-                        <linearGradient id="colorWind" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.1}/>
-                          <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                       <XAxis 
                         dataKey="time" 
@@ -786,6 +798,7 @@ export default function App() {
                         axisLine={false} 
                         tickLine={false} 
                         tick={{ fontSize: 10, fill: '#0ea5e9', fontWeight: 600 }}
+                        domain={[0, 'dataMax + 10']}
                         label={{ value: 'Wind (kt)', angle: -90, position: 'insideLeft', fontSize: 10, fill: '#0ea5e9', fontWeight: 700 }}
                       />
                       <YAxis 
@@ -796,11 +809,6 @@ export default function App() {
                         tick={{ fontSize: 10, fill: '#10b981', fontWeight: 600 }}
                         domain={[0, 10]}
                         label={{ value: 'Visibility (km)', angle: 90, position: 'insideRight', fontSize: 10, fill: '#10b981', fontWeight: 700 }}
-                      />
-                      <YAxis
-                        yAxisId="ceiling"
-                        orientation="right"
-                        hide
                       />
                       <Tooltip 
                         contentStyle={{ 
@@ -814,29 +822,27 @@ export default function App() {
                         itemStyle={{ color: '#fff' }}
                         cursor={{ stroke: '#cbd5e1', strokeWidth: 1 }}
                         formatter={(value: number, name: string) => {
-                          if (name === "Ceiling (kft)") return [`${value.toFixed(1)} kft`, name];
                           if (name === "Visibility (km)") return [`${value.toFixed(1)} km`, name];
                           return [`${value.toFixed(0)} kt`, name];
                         }}
                       />
-                      <Area 
+                      <Line
                         yAxisId="left"
                         type="monotone" 
                         dataKey="gust" 
                         stroke="#fb923c" 
-                        fill="transparent" 
                         strokeWidth={2}
                         strokeDasharray="5 5"
+                        dot={{ r: 2, fill: '#fb923c' }}
                         name="Gusts (kt)"
                       />
-                      <Area 
+                      <Line
                         yAxisId="left"
                         type="monotone" 
                         dataKey="wind" 
                         stroke="#0ea5e9" 
-                        fillOpacity={1} 
-                        fill="url(#colorWind)" 
                         strokeWidth={3}
+                        dot={{ r: 3, fill: '#0ea5e9' }}
                         name="Wind (kt)"
                       />
                       <Line 
@@ -848,23 +854,13 @@ export default function App() {
                         dot={{ r: 3, fill: '#10b981' }}
                         name="Visibility (km)"
                       />
-                      <Line 
-                        yAxisId="ceiling"
-                        type="monotone" 
-                        dataKey="ceiling" 
-                        stroke="#8b5cf6" 
-                        strokeWidth={2}
-                        strokeDasharray="3 3"
-                        dot={false}
-                        name="Ceiling (kft)"
-                      />
                       <Legend 
                         verticalAlign="top" 
                         height={36} 
                         iconType="circle" 
                         wrapperStyle={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}
                       />
-                    </AreaChart>
+                    </LineChart>
                   </ResponsiveContainer>
                 </div>
 
