@@ -12,7 +12,6 @@ import {
   ChevronDown, 
   AlertTriangle,
   Plane,
-  Info,
   ArrowUp,
   ArrowRight,
   Compass,
@@ -123,10 +122,19 @@ type MetarCloudLayer = {
 
 type MetarApiResponse = {
   wdir?: number | string;
+  wind_dir_degrees?: number | string;
+  drct?: number | string;
   wspd?: number | string;
+  wind_speed_kt?: number | string;
+  sknt?: number | string;
   wgst?: number | string;
+  wind_gust_kt?: number | string;
+  gust?: number | string;
   visib?: number | string;
+  visibility_statute_mi?: number | string;
+  vsby?: number | string;
   temp?: number | string;
+  temp_c?: number | string;
   cloud_layers?: MetarCloudLayer[];
   clouds?: MetarCloudLayer[];
   ceiling?: number | string;
@@ -150,6 +158,15 @@ const roundToNearestTen = (value: number) => Math.round(value / 10) * 10;
 const roundToStep = (value: number, step: number) => Math.round(value / step) * step;
 const normalizeHeading = (value: number) => ((value % 360) + 360) % 360;
 const roundDirectionToTen = (value: number) => normalizeHeading(roundToNearestTen(value));
+const toNumber = (value: unknown) => {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+const formatDirection = (value: number) => {
+  const normalized = normalizeHeading(value);
+  return normalized === 0 ? 360 : normalized;
+};
 
 const calculateWindComponents = (windSpeed: number, windDir: number, rwyHeading: number) => {
   const diff = (windDir - rwyHeading) * (Math.PI / 180);
@@ -355,7 +372,6 @@ export default function App() {
 
   const currentWeatherData = weatherData[selectedIcao];
 
-  const [sortBy, setSortBy] = useState<"runway" | "headwind" | "crosswind">("headwind");
 
   const fetchWeather = useCallback(async (icao: string) => {
     const ad = AERODROMES.find(a => a.icao === icao);
@@ -413,42 +429,46 @@ export default function App() {
         const metar = metarJson?.[0];
 
         if (metar) {
-          const metarWindDirRaw = Number(metar.wdir);
-          const metarWindSpeedKt = Number(metar.wspd);
-          const metarWindGustKt = Number(metar.wgst);
-          const metarVisSm = Number(metar.visib);
-          const metarTemp = Number(metar.temp);
+          const metarWindDirRaw = toNumber(metar.wdir) ?? toNumber(metar.wind_dir_degrees) ?? toNumber(metar.drct);
+          const metarWindSpeedKt = toNumber(metar.wspd) ?? toNumber(metar.wind_speed_kt) ?? toNumber(metar.sknt);
+          const metarWindGustKt = toNumber(metar.wgst) ?? toNumber(metar.wind_gust_kt) ?? toNumber(metar.gust);
+          const metarVisSm = toNumber(metar.visib) ?? toNumber(metar.visibility_statute_mi) ?? toNumber(metar.vsby);
+          const metarTemp = toNumber(metar.temp) ?? toNumber(metar.temp_c);
           const cloudLayers = metar.cloud_layers || metar.clouds || [];
-          const metarCeilingFt = Number(metar.ceiling);
+          const metarCeilingFt = toNumber(metar.ceiling);
 
-          if (!Number.isNaN(metarWindDirRaw)) {
+          if (metarWindDirRaw !== null) {
             currentProcessed.windDirection = roundDirectionToTen(metarWindDirRaw);
           } else {
             currentProcessed.windDirection = roundDirectionToTen(currentProcessed.windDirection);
           }
 
-          if (!Number.isNaN(metarWindSpeedKt)) {
+          if (metarWindSpeedKt !== null) {
             currentProcessed.windSpeed = metarWindSpeedKt / 1.94384;
           }
 
-          if (!Number.isNaN(metarWindGustKt)) {
+          if (metarWindGustKt !== null) {
             currentProcessed.windGust = metarWindGustKt / 1.94384;
           }
 
-          if (!Number.isNaN(metarVisSm)) {
+          if (metarVisSm !== null) {
             currentProcessed.visibility = metarVisSm * 1609.34;
           }
 
-          if (!Number.isNaN(metarTemp)) {
+          if (metarTemp !== null) {
             currentProcessed.temperature = metarTemp;
           }
 
-          if (!Number.isNaN(metarCeilingFt)) {
-            currentProcessed.cloudCeiling = metarCeilingFt / 3.28084;
+          if (metarCeilingFt !== null) {
+            const ceilingFt = metarCeilingFt < 100 ? metarCeilingFt * 100 : metarCeilingFt;
+            currentProcessed.cloudCeiling = ceilingFt / 3.28084;
           } else if (cloudLayers.length) {
             const lowestBrokenOrOvercast = cloudLayers
               .filter(layer => ["BKN", "OVC", "VV"].includes(layer.cover) && layer.base !== undefined)
-              .map(layer => layer.base as number)
+              .map(layer => {
+                const base = layer.base as number;
+                return base < 100 ? base * 100 : base;
+              })
               .sort((a, b) => a - b)[0];
             if (lowestBrokenOrOvercast) {
               currentProcessed.cloudCeiling = lowestBrokenOrOvercast / 3.28084;
@@ -522,40 +542,16 @@ export default function App() {
       activeRwy.heading
     );
     return {
-      headwind: roundToStep(comps.headwind, 10),
-      crosswind: roundToStep(comps.crosswind, 10),
+      headwind: roundToStep(comps.headwind, 1),
+      crosswind: roundToStep(comps.crosswind, 1),
     };
   }, [currentWeatherData, activeRwy]);
-
-  const runwayTableRows = useMemo(() => {
-    if (!currentWeatherData) return [];
-
-    const rows = selectedAerodrome.runways.map((r) => {
-      const comps = calculateWindComponents(
-        msToKnots(currentWeatherData.windSpeed),
-        currentWeatherData.windDirection,
-        r.heading
-      );
-      return {
-        label: r.label,
-        headwind: roundToStep(comps.headwind, 10),
-        crosswind: roundToStep(comps.crosswind, 10),
-        xwAbs: Math.abs(roundToStep(comps.crosswind, 10)),
-      };
-    });
-
-    return [...rows].sort((a, b) => {
-      if (sortBy === "runway") return a.label.localeCompare(b.label);
-      if (sortBy === "crosswind") return a.xwAbs - b.xwAbs;
-      return b.headwind - a.headwind;
-    });
-  }, [currentWeatherData, selectedAerodrome, sortBy]);
 
   const forecastChartData = useMemo(() => (
     currentWeatherData?.forecast.map(f => ({
       time: new Date(f.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      wind: roundToNearestTen(msToKnots(f.windSpeed)),
-      gust: roundToNearestTen(msToKnots(f.windGust || f.windSpeed)),
+      wind: Math.round(msToKnots(f.windSpeed)),
+      gust: Math.round(msToKnots(f.windGust || f.windSpeed)),
       vis: Number(metersToKm(f.visibility).toFixed(1)),
     })) || []
   ), [currentWeatherData]);
@@ -587,10 +583,6 @@ export default function App() {
             >
               <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
             </button>
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-full text-xs font-medium text-slate-500">
-              <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-              Live Data
-            </div>
           </div>
         </div>
       </header>
@@ -755,9 +747,9 @@ export default function App() {
                   <div className="text-xl md:text-2xl font-black text-slate-800">
                     {currentWeatherData ? (
                       <>
-                        {roundDirectionToTen(currentWeatherData.windDirection)}° <span className="text-slate-400 font-medium text-base md:text-lg">FROM</span> @ {roundToNearestTen(msToKnots(currentWeatherData.windSpeed))}
+                        {formatDirection(roundDirectionToTen(currentWeatherData.windDirection))}° <span className="text-slate-400 font-medium text-base md:text-lg">FROM</span> @ {Math.round(msToKnots(currentWeatherData.windSpeed))}
                         {currentWeatherData.windGust && currentWeatherData.windGust > currentWeatherData.windSpeed + 2 && (
-                          <span className="text-orange-500"> G {roundToNearestTen(msToKnots(currentWeatherData.windGust))}</span>
+                          <span className="text-orange-500"> G {Math.round(msToKnots(currentWeatherData.windGust))}</span>
                         )}
                         <span className="text-slate-400 font-medium text-base md:text-lg ml-1">KT</span>
                       </>
@@ -969,126 +961,11 @@ export default function App() {
                   </ResponsiveContainer>
                 </div>
 
-                <div className="mt-8 grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {currentWeatherData.forecast.slice(0, 4).map((f, i) => (
-                    <div key={i} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 transition-all hover:shadow-md hover:bg-white group">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                          {new Date(f.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                        <div className="w-2 h-2 bg-sky-500 rounded-full group-hover:animate-ping" />
-                      </div>
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold text-slate-500">Wind</span>
-                          <div className="flex items-center gap-1">
-                            <ArrowUp 
-                              className="w-2.5 h-2.5 text-sky-500" 
-                              style={{ transform: `rotate(${f.windDirection}deg)` }} 
-                            />
-                            <span className="text-xs font-black text-slate-800">{roundToNearestTen(msToKnots(f.windSpeed))}kt</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold text-slate-500">Ceiling</span>
-                          <span className="text-xs font-black text-sky-600">
-                            {f.cloudCeiling < 0 ? "—" : `${metersToFeet(f.cloudCeiling).toFixed(0)}ft`}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold text-slate-500">Vis</span>
-                          <span className="text-xs font-black text-emerald-600">{metersToKm(f.visibility).toFixed(0)}km</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
               </div>
             )}
-
-            {/* Interactive runway matrix */}
-            <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">Runway Decision Matrix</h3>
-                <div className="flex gap-2">
-                  {[
-                    { key: "headwind", label: "Best HW" },
-                    { key: "crosswind", label: "Min XW" },
-                    { key: "runway", label: "RWY" },
-                  ].map((option) => (
-                    <button
-                      key={option.key}
-                      onClick={() => setSortBy(option.key as "runway" | "headwind" | "crosswind")}
-                      className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border ${
-                        sortBy === option.key ? "bg-sky-600 text-white border-sky-600" : "bg-slate-50 text-slate-500 border-slate-200"
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="text-slate-400 uppercase tracking-widest text-[10px]">
-                      <th className="py-2">Runway</th>
-                      <th className="py-2">Head/Tail</th>
-                      <th className="py-2">Crosswind</th>
-                      <th className="py-2">Hint</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {runwayTableRows.map((row) => {
-                      const recommended = row.label === bestRunway.label;
-                      const active = row.label === activeRwy.label;
-                      return (
-                        <tr
-                          key={row.label}
-                          onClick={() => setManualRwy(prev => ({ ...prev, [selectedIcao]: row.label }))}
-                          className={`cursor-pointer border-t transition-colors ${
-                            active ? "bg-sky-50 border-sky-100" : "border-slate-100 hover:bg-slate-50"
-                          }`}
-                        >
-                          <td className="py-3 font-black text-slate-700">RWY {row.label}</td>
-                          <td className={`py-3 font-bold ${row.headwind >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                            {row.headwind >= 0 ? "+" : ""}{row.headwind.toFixed(0)} kt
-                          </td>
-                          <td className="py-3 font-bold text-slate-700">
-                            {row.crosswind >= 0 ? "R" : "L"} {Math.abs(row.crosswind).toFixed(0)} kt
-                          </td>
-                          <td className="py-3">
-                            {recommended ? (
-                              <span className="px-2 py-1 rounded-md bg-emerald-100 text-emerald-700 font-black text-[10px] uppercase">Recommended</span>
-                            ) : (
-                              <span className="text-slate-400 font-bold">Alternative</span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Disclaimer */}
-            <div className="p-4 bg-slate-100 rounded-xl flex items-start gap-3">
-              <Info className="w-4 h-4 text-slate-400 mt-0.5 flex-shrink-0" />
-              <p className="text-[10px] text-slate-500 leading-relaxed">
-                <strong>Disclaimer:</strong> This dashboard is for informational purposes only. Data is sourced from Met.no and may not reflect real-time local conditions. Always consult official METAR/TAF and NOTAMs before flight operations. Runway headings are magnetic.
-              </p>
-            </div>
           </div>
         </div>
       </main>
-
-      {/* Footer */}
-      <footer className="max-w-5xl mx-auto px-4 py-12 text-center">
-        <p className="text-xs text-slate-400 font-medium">
-          © 2026 Wind.pt — Portuguese General Aviation Dashboard
-        </p>
-      </footer>
     </div>
   );
 }
