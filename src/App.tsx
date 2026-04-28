@@ -115,29 +115,26 @@ type WeatherData = {
   }>;
 };
 
-type MetarCloudLayer = {
-  cover: string;
-  base?: number;
+type IpmaDailyForecastPoint = {
+  forecastDate?: string;
+  classWindSpeed?: number | string;
+  predWindDir?: string;
+  tMin?: number | string;
+  tMax?: number | string;
+  idWeatherType?: number | string;
+  precipitaProb?: number | string;
 };
 
-type MetarApiResponse = {
-  wdir?: number | string;
-  wind_dir_degrees?: number | string;
-  drct?: number | string;
-  wspd?: number | string;
-  wind_speed_kt?: number | string;
-  sknt?: number | string;
-  wgst?: number | string;
-  wind_gust_kt?: number | string;
-  gust?: number | string;
-  visib?: number | string;
-  visibility_statute_mi?: number | string;
-  vsby?: number | string;
-  temp?: number | string;
-  temp_c?: number | string;
-  cloud_layers?: MetarCloudLayer[];
-  clouds?: MetarCloudLayer[];
-  ceiling?: number | string;
+type IpmaDailyForecastResponse = {
+  data?: IpmaDailyForecastPoint[];
+};
+type IpmaLocation = {
+  globalIdLocal?: number;
+  latitude?: number | string;
+  longitude?: number | string;
+};
+type IpmaLocationsResponse = {
+  data?: IpmaLocation[];
 };
 
 type FlightCategory = "VFR" | "MVFR" | "IFR" | "LIFR";
@@ -167,6 +164,70 @@ const formatDirection = (value: number) => {
   const normalized = normalizeHeading(value);
   return normalized === 0 ? 360 : normalized;
 };
+
+const getWindDirectionDegreesFromCardinal = (cardinal?: string) => {
+  if (!cardinal) return null;
+  const map: Record<string, number> = {
+    N: 0,
+    NNE: 22.5,
+    NE: 45,
+    ENE: 67.5,
+    E: 90,
+    ESE: 112.5,
+    SE: 135,
+    SSE: 157.5,
+    S: 180,
+    SSW: 202.5,
+    SW: 225,
+    WSW: 247.5,
+    W: 270,
+    WNW: 292.5,
+    NW: 315,
+    NNW: 337.5,
+  };
+  return map[cardinal.toUpperCase()] ?? null;
+};
+
+const getWindSpeedMsFromClass = (windClass: number) => {
+  // IPMA classes are Beaufort-like ranges; values below are representative midpoints in m/s.
+  const map: Record<number, number> = {
+    1: 0.7,
+    2: 2.2,
+    3: 4.0,
+    4: 6.0,
+    5: 8.8,
+    6: 11.8,
+    7: 14.9,
+    8: 18.2,
+    9: 21.6,
+    10: 25.2,
+    11: 29.0,
+    12: 33.0,
+  };
+  return map[windClass] ?? 4.0;
+};
+
+const getVisibilityMetersFromWeatherType = (weatherType: number | null, precipitationProb: number) => {
+  if (weatherType === null) return 10000;
+  // Conservative visibility estimates by weather phenomena.
+  if ([24, 25, 26, 27].includes(weatherType)) return 500; // Fog / mist like conditions
+  if ([12, 13, 14, 15, 16, 17].includes(weatherType) || precipitationProb >= 70) return 4000; // Rain/showers
+  if ([18, 19, 20, 21, 22, 23].includes(weatherType)) return 2500; // Snow/sleet
+  if ([28].includes(weatherType)) return 3500; // Thunderstorm
+  return 10000;
+};
+
+const getCloudCeilingMetersFromWeatherType = (weatherType: number | null, precipitationProb: number) => {
+  if (weatherType === null) return 3000;
+  if ([24, 25, 26, 27].includes(weatherType)) return 200; // Fog
+  if (precipitationProb >= 70) return 800;
+  if ([3, 4, 5, 6, 7, 8, 9, 10, 11].includes(weatherType)) return 1200; // Mostly/overcast variants
+  if ([12, 13, 14, 15, 16, 17, 28].includes(weatherType)) return 700; // Rain / TS
+  return 3000;
+};
+
+const getDistanceSquared = (lat1: number, lon1: number, lat2: number, lon2: number) =>
+  ((lat1 - lat2) ** 2) + ((lon1 - lon2) ** 2);
 
 const calculateWindComponents = (windSpeed: number, windDir: number, rwyHeading: number) => {
   const diff = (windDir - rwyHeading) * (Math.PI / 180);
@@ -381,114 +442,59 @@ export default function App() {
     setError(null);
 
     try {
-      const [forecastResponse, metarResult] = await Promise.all([
-        fetch(`https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=${ad.latitude}&lon=${ad.longitude}`),
-        fetch(`https://aviationweather.gov/api/data/metar?ids=${icao}&format=json&hours=2`).catch(() => null)
-      ]);
+      const locationsResponse = await fetch("https://api.ipma.pt/open-data/distrits-islands.json");
+      if (!locationsResponse.ok) throw new Error("IPMA locations unavailable");
+      const locationsJson: IpmaLocationsResponse = await locationsResponse.json();
+      const locations = locationsJson.data ?? [];
+      const nearestLocation = locations
+        .map((location) => {
+          const globalIdLocal = toNumber(location.globalIdLocal);
+          const latitude = toNumber(location.latitude);
+          const longitude = toNumber(location.longitude);
+          if (globalIdLocal === null || latitude === null || longitude === null) return null;
+          return {
+            globalIdLocal,
+            distance: getDistanceSquared(ad.latitude, ad.longitude, latitude, longitude)
+          };
+        })
+        .filter((value): value is { globalIdLocal: number; distance: number } => value !== null)
+        .sort((a, b) => a.distance - b.distance)[0];
+
+      if (!nearestLocation) throw new Error("No nearby IPMA location found");
+
+      const forecastResponse = await fetch(
+        `https://api.ipma.pt/open-data/forecast/meteorology/cities/daily/${nearestLocation.globalIdLocal}.json`
+      );
 
       if (!forecastResponse.ok) throw new Error("Weather service unavailable");
 
-      const forecastData = await forecastResponse.json();
-      const timeseries = forecastData.properties.timeseries;
-      const current = timeseries[0].data.instant.details;
-      
-      const processPoint = (details: any) => {
-        const windSpeed = details.wind_speed;
-        const windGust = details.wind_speed_of_gust;
-        const windDir = details.wind_from_direction;
-        const temp = details.air_temperature;
-        
-        // Estimate visibility
-        const fog = details.fog_area_fraction || 0;
-        const visibility = fog > 50 ? 500 : fog > 20 ? 2000 : fog > 5 ? 5000 : 10000;
+      const forecastData: IpmaDailyForecastResponse = await forecastResponse.json();
+      const dailyPoints = forecastData.data ?? [];
+      if (!dailyPoints.length) throw new Error("No forecast data");
 
-        // Better ceiling logic using cloud_base_altitude if available
-        let cloudCeiling = 10000; // Default to high
-        if (details.cloud_base_altitude !== undefined) {
-          cloudCeiling = details.cloud_base_altitude;
-        } else {
-          // Fallback to estimation only if cloud fraction is significant
-          const lowClouds = details.cloud_area_fraction_low || 0;
-          const totalClouds = details.cloud_area_fraction || 0;
-          if (lowClouds > 25) {
-            cloudCeiling = lowClouds > 80 ? 300 : lowClouds > 50 ? 600 : 1000;
-          } else if (totalClouds > 50) {
-            cloudCeiling = 1500;
-          } else {
-            cloudCeiling = -1; // Indicator for "No Ceiling"
-          }
-        }
-
-        return { windSpeed, windGust, windDirection: windDir, temperature: temp, visibility, cloudCeiling };
+      const processDailyPoint = (point: IpmaDailyForecastPoint) => {
+        const windClass = toNumber(point.classWindSpeed) ?? 3;
+        const windDirection = getWindDirectionDegreesFromCardinal(point.predWindDir) ?? 0;
+        const tMin = toNumber(point.tMin);
+        const tMax = toNumber(point.tMax);
+        const weatherType = toNumber(point.idWeatherType);
+        const precipitationProb = toNumber(point.precipitaProb) ?? 0;
+        return {
+          windSpeed: getWindSpeedMsFromClass(windClass),
+          windGust: undefined,
+          windDirection: roundDirectionToTen(windDirection),
+          temperature: tMin !== null && tMax !== null ? roundToStep((tMin + tMax) / 2, 0.1) : 20,
+          visibility: getVisibilityMetersFromWeatherType(weatherType, precipitationProb),
+          cloudCeiling: getCloudCeilingMetersFromWeatherType(weatherType, precipitationProb),
+        };
       };
 
-      const currentProcessed = processPoint(current);
+      const currentProcessed = processDailyPoint(dailyPoints[0]);
 
-      if (metarResult?.ok) {
-        const metarJson: MetarApiResponse[] = await metarResult.json();
-        const metar = metarJson?.[0];
-
-        if (metar) {
-          const metarWindDirRaw = toNumber(metar.wdir) ?? toNumber(metar.wind_dir_degrees) ?? toNumber(metar.drct);
-          const metarWindSpeedKt = toNumber(metar.wspd) ?? toNumber(metar.wind_speed_kt) ?? toNumber(metar.sknt);
-          const metarWindGustKt = toNumber(metar.wgst) ?? toNumber(metar.wind_gust_kt) ?? toNumber(metar.gust);
-          const metarVisSm = toNumber(metar.visib) ?? toNumber(metar.visibility_statute_mi) ?? toNumber(metar.vsby);
-          const metarTemp = toNumber(metar.temp) ?? toNumber(metar.temp_c);
-          const cloudLayers = metar.cloud_layers || metar.clouds || [];
-          const metarCeilingFt = toNumber(metar.ceiling);
-
-          if (metarWindDirRaw !== null) {
-            currentProcessed.windDirection = roundDirectionToTen(metarWindDirRaw);
-          } else {
-            currentProcessed.windDirection = roundDirectionToTen(currentProcessed.windDirection);
-          }
-
-          if (metarWindSpeedKt !== null) {
-            currentProcessed.windSpeed = metarWindSpeedKt / 1.94384;
-          }
-
-          if (metarWindGustKt !== null) {
-            currentProcessed.windGust = metarWindGustKt / 1.94384;
-          }
-
-          if (metarVisSm !== null) {
-            currentProcessed.visibility = metarVisSm * 1609.34;
-          }
-
-          if (metarTemp !== null) {
-            currentProcessed.temperature = metarTemp;
-          }
-
-          if (metarCeilingFt !== null) {
-            const ceilingFt = metarCeilingFt < 100 ? metarCeilingFt * 100 : metarCeilingFt;
-            currentProcessed.cloudCeiling = ceilingFt / 3.28084;
-          } else if (cloudLayers.length) {
-            const lowestBrokenOrOvercast = cloudLayers
-              .filter(layer => ["BKN", "OVC", "VV"].includes(layer.cover) && layer.base !== undefined)
-              .map(layer => {
-                const base = layer.base as number;
-                return base < 100 ? base * 100 : base;
-              })
-              .sort((a, b) => a - b)[0];
-            if (lowestBrokenOrOvercast) {
-              currentProcessed.cloudCeiling = lowestBrokenOrOvercast / 3.28084;
-            }
-          }
-        } else {
-          currentProcessed.windDirection = roundDirectionToTen(currentProcessed.windDirection);
-        }
-      } else {
-        currentProcessed.windDirection = roundDirectionToTen(currentProcessed.windDirection);
-      }
-      
-      const forecast = timeseries.slice(1, 13).map((ts: any) => {
-        const point = processPoint(ts.data.instant.details);
-        return {
-          time: ts.time,
-          ...point,
-          windDirection: roundDirectionToTen(point.windDirection)
-        };
-      });
+      const forecast = dailyPoints.slice(1, 6).map((point) => ({
+        time: point.forecastDate ?? new Date().toISOString(),
+        ...processDailyPoint(point),
+      }));
 
       setWeatherData(prev => ({
         ...prev,
